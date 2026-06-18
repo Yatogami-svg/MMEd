@@ -4,6 +4,8 @@ on:
   schedule:
     - cron: '0 5 * * *'  # каждый день в 5 утра UTC
   workflow_dispatch:     # ручной запуск
+  branches:
+      - main
 
 jobs:
   scrape:
