@@ -1,0 +1,40 @@
+name: Scrape Rules
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    branches:
+      - main
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+        with:
+          ref: main
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run parser
+        env:
+          FORUM_USERNAME: ${{ secrets.FORUM_USERNAME }}
+          FORUM_PASSWORD: ${{ secrets.FORUM_PASSWORD }}
+        run: python parser.py
+
+      - name: Commit and push changes
+        uses: step-security/git-auto-commit-action@v5
+        with:
+          commit_message: "Автоматическое обновление правил"
+          file_pattern: rules.json
