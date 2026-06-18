@@ -58,20 +58,36 @@ def login(session):
     print("Авторизация успешна!")
     return session
 
-def extract_chapters(text):
-    # Удаляем невидимые символы и исправляем заголовки глав
-    text = re.sub(r'[\u200b\u200c\u200d]', '', text)
-    # Объединяем разорванные заголовки: I\n. Общие положения. -> I. Общие положения.
-    text = re.sub(r'(I|II|III|IV|V|VI|VII|VIII|IX|X)\s*\n\s*\.\s*', r'\1. ', text)
-    lines = text.split('\n')
+def extract_chapters(raw_text):
+    # Убираем все невидимые символы
+    raw_text = re.sub(r'[\u200b\u200c\u200d\u2028\u2029]', '', raw_text)
+    lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+
+    # Сначала объединяем строки, где римская цифра отделена от точки
+    merged = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # Если строка является римской цифрой (возможно с пробелами) и следующая начинается с точки
+        if re.fullmatch(r'[IVX]+', line) and i+1 < len(lines):
+            next_line = lines[i+1]
+            if next_line.startswith('.'):
+                merged.append(line + next_line)
+                i += 2
+                continue
+            else:
+                # Если следующая строка не с точкой, возможно это отдельный элемент (не заголовок)
+                merged.append(line)
+        else:
+            merged.append(line)
+        i += 1
+
     chapters = []
     current_head = None
     current_text = []
+    # Ищем строки, начинающиеся с римской цифры и точки
     roman_pattern = re.compile(r'^([IVX]+)\.\s*(.*)$')
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
+    for line in merged:
         match = roman_pattern.match(line)
         if match:
             if current_head is not None:
@@ -85,9 +101,13 @@ def extract_chapters(text):
                 current_text.append(line)
     if current_head is not None:
         chapters.append({'head': current_head, 'text': '\n'.join(current_text).strip()})
+
+    # Удаляем главы с пустым текстом (если они есть)
+    chapters = [ch for ch in chapters if ch['text'] or ch['head']]
     return chapters
 
 def parse_post(post_element):
+    # Ищем контейнер с содержимым поста
     wrapper = post_element.find('div', class_='bbWrapper')
     if not wrapper:
         wrapper = post_element.find('article', class_='message-body')
@@ -102,18 +122,11 @@ def parse_post(post_element):
     if not wrapper:
         print("Не найден контейнер с содержимым поста")
         return []
-    
+
     for br in wrapper.find_all('br'):
         br.replace_with('\n')
     raw_text = wrapper.get_text(separator='\n')
     raw_text = re.sub(r'\n\s*\n', '\n', raw_text).strip()
-    
-    # Предобработка
-    raw_text = re.sub(r'[\u200b\u200c\u200d]', '', raw_text)
-    raw_text = re.sub(r'(I|II|III|IV|V|VI|VII|VIII|IX|X)\s*\n\s*\.\s*', r'\1. ', raw_text)
-    
-    print(f"Извлечённый текст (первые 500 символов после предобработки):")
-    print(raw_text[:500] if raw_text else "Текст пуст")
     return extract_chapters(raw_text)
 
 def main():
@@ -150,6 +163,10 @@ def main():
         chapters = parse_post(post)
         if not chapters:
             print(f"Пост {idx} не содержит глав")
+            # Для отладки выведем текст поста
+            post_text = post.get_text(separator='\n', strip=True)
+            print(f"Текст поста {idx} (первые 1000 символов):")
+            print(post_text[:1000])
             continue
         name = "Дисциплинарный устав СМИ" if idx == 0 else "Устав СМИ"
         sections.append({
