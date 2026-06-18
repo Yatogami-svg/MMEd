@@ -37,7 +37,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add *.json   # добавляем все JSON-файлы
+          git add *.json
           if git diff --staged --quiet; then
             echo "Нет изменений в JSON-файлах. Коммит не требуется."
           else
