@@ -4,33 +4,37 @@ import json
 import re
 from datetime import datetime
 import os
+import time
 
 FORUM_URL = "https://forum.adv-rp.com/threads/mm-distsiplinarnyi-ustav-i-ustav-sredstv-massovoi-informatsii.2619941/"
 LOGIN_URL = "https://forum.adv-rp.com/login"
 USERNAME = os.getenv("FORUM_USERNAME")
 PASSWORD = os.getenv("FORUM_PASSWORD")
 
+# Расширенный набор заголовков, имитирующий браузер Chrome
+HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'same-origin',
+    'Sec-Fetch-User': '?1',
+    'Cache-Control': 'max-age=0',
+}
+
 def login(session):
     print(f"Попытка входа для {USERNAME}")
-
-    # 1. Получаем страницу логина для CSRF-токена
-    login_page = session.get(LOGIN_URL)
-    print(f"Статус загрузки страницы логина: {login_page.status_code}")
-
+    login_page = session.get(LOGIN_URL, headers=HEADERS)
     soup = BeautifulSoup(login_page.text, 'html.parser')
-
-    # Ищем все поля ввода на форме
     form = soup.find('form', {'action': re.compile(r'login')})
     if not form:
-        # Попробуем найти любую форму с полями login/password
         form = soup.find('form')
     if not form:
-        print("Не найдена форма логина. Проверьте HTML страницы логина.")
-        # Выведем первые 500 символов для отладки
-        print(login_page.text[:500])
         raise Exception("Форма логина не найдена")
-
-    # Ищем все поля input внутри формы
     inputs = form.find_all('input')
     data = {}
     for inp in inputs:
@@ -38,43 +42,23 @@ def login(session):
         value = inp.get('value', '')
         if name:
             data[name] = value
-            print(f"Найдено поле: {name} = {value[:10]}...")
-
-    # Добавляем логин и пароль (обычно поля называются 'login' и 'password')
-    # Если в форме есть поля с другими именами, нужно их переопределить
     data['login'] = USERNAME
     data['password'] = PASSWORD
-
-    # Также добавляем remember, если есть
     if 'remember' not in data:
         data['remember'] = '1'
-
-    # Удаляем возможный пустой _xfToken, если он есть (он уже будет из формы)
-    # Отправляем POST-запрос
     action_url = form.get('action')
     if not action_url:
         action_url = LOGIN_URL
     if not action_url.startswith('http'):
         action_url = 'https://forum.adv-rp.com' + action_url
-
-    print(f"Отправка POST на {action_url}")
-    response = session.post(action_url, data=data)
-
-    print(f"Статус ответа после логина: {response.status_code}")
-    print(f"URL после логина: {response.url}")
-
-    # Проверяем, успешен ли вход
-    # Если в URL есть 'login' – скорее всего ошибка
+    # Добавляем заголовки для POST-запроса
+    login_headers = HEADERS.copy()
+    login_headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    response = session.post(action_url, data=data, headers=login_headers)
     if 'login' in response.url and response.status_code != 200:
-        raise Exception("Ошибка авторизации. Проверьте логин/пароль или токен.")
-
-    # Также можно проверить наличие cookie с сессией
+        raise Exception("Ошибка авторизации")
     if 'xf_session' not in session.cookies:
-        print("Не найдена сессионная cookie. Возможно, вход не удался.")
-        # Выведем часть ответа для отладки
-        print(response.text[:500])
         raise Exception("Сессия не установлена")
-
     print("Авторизация успешна!")
     return session
 
@@ -117,10 +101,15 @@ def main():
     if not USERNAME or not PASSWORD:
         raise Exception("Не заданы переменные окружения FORUM_USERNAME и FORUM_PASSWORD")
     session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'})
+    session.headers.update(HEADERS)
     login(session)
-    response = session.get(FORUM_URL)
+    # После логина используем те же заголовки для GET-запроса
+    response = session.get(FORUM_URL, headers=HEADERS)
     if response.status_code != 200:
+        # Если 403, возможно, нужен реферар или другие заголовки
+        print(f"Ошибка загрузки: {response.status_code}")
+        print("Ответ сервера (первые 500 символов):")
+        print(response.text[:500])
         raise Exception(f"Не удалось загрузить страницу: {response.status_code}")
     soup = BeautifulSoup(response.text, 'html.parser')
     posts = soup.find_all('article', class_='message')
