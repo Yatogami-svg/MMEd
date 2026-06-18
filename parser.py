@@ -5,7 +5,46 @@ import re
 from datetime import datetime
 import os
 
-FORUM_URL = "https://forum.adv-rp.com/threads/mm-distsiplinarnyi-ustav-i-ustav-sredstv-massovoi-informatsii.2619941/"
+# ------------------- СПИСОК СТРАНИЦ ДЛЯ ПАРСИНГА -------------------
+PAGES = [
+    {
+        "url": "https://forum.adv-rp.com/threads/mm-pravila-redaktirovaniya-ob-yavlenii-pro.2618807/",
+        "type": "pro",
+        "posts": [2, 3, 4, 5, 6, 7, 8, 9],  # посты #2-#9
+        "output": "pro.json"
+    },
+    {
+        "url": "https://forum.adv-rp.com/threads/mm-pravila-redaktirovaniya-ob-yavlenii-pro.2618807/",
+        "type": "useful",
+        "posts": [10, 11],                  # посты #10-#11 (Полезное)
+        "output": "useful.json"
+    },
+    {
+        "url": "https://forum.adv-rp.com/threads/mm-obshchiye-pravila-smi-new-gen-14-02-2025.2618334/",
+        "type": "common",
+        "output": "common_rules.json"
+    },
+    {
+        "url": "https://forum.adv-rp.com/threads/mm-o-pravila-provedeniya-efirov-pp-e.2379776/",
+        "type": "ppe",
+        "output": "ppe.json"
+    },
+    {
+        "url": "https://forum.adv-rp.com/threads/mm-o-belyi-spisok-sredstv-massovoi-informatsii.2694858/",
+        "type": "white_list",
+        "posts": [2],  # только пост #2
+        "output": "white_list.json"
+    },
+    {
+        "url": "https://forum.adv-rp.com/threads/mm-chernyi-spisok-smi-spisok-lyudei-log-izmenenii-chs-smi.2420838/",
+        "type": "black_list",
+        "posts": [2],  # пост #2 с таблицами
+        "output": "black_list.json"
+    },
+    # Уже есть дисциплинарный устав – мы его не парсим отдельно, он уже включён в rules.json
+]
+
+# ------------------- НАСТРОЙКИ ФОРУМА -------------------
 LOGIN_URL = "https://forum.adv-rp.com/login"
 USERNAME = os.getenv("FORUM_USERNAME")
 PASSWORD = os.getenv("FORUM_PASSWORD")
@@ -23,6 +62,7 @@ HEADERS = {
     'Cache-Control': 'max-age=0',
 }
 
+# ------------------- ФУНКЦИИ АВТОРИЗАЦИИ -------------------
 def login(session):
     print(f"Попытка входа для {USERNAME}")
     login_page = session.get(LOGIN_URL, headers=HEADERS)
@@ -58,34 +98,26 @@ def login(session):
     print("Авторизация успешна!")
     return session
 
+# ------------------- ОБЩИЕ ФУНКЦИИ ПАРСИНГА -------------------
 def extract_chapters(raw_text):
-    # Убираем все невидимые символы
+    """Разбивает текст на главы по римским цифрам (I., II., III. и т.д.)"""
     raw_text = re.sub(r'[\u200b\u200c\u200d\u2028\u2029]', '', raw_text)
     lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
-
-    # Сначала объединяем строки, где римская цифра отделена от точки
     merged = []
     i = 0
     while i < len(lines):
         line = lines[i]
-        # Если строка является римской цифрой (возможно с пробелами) и следующая начинается с точки
         if re.fullmatch(r'[IVX]+', line) and i+1 < len(lines):
             next_line = lines[i+1]
             if next_line.startswith('.'):
                 merged.append(line + next_line)
                 i += 2
                 continue
-            else:
-                # Если следующая строка не с точкой, возможно это отдельный элемент (не заголовок)
-                merged.append(line)
-        else:
-            merged.append(line)
+        merged.append(line)
         i += 1
-
     chapters = []
     current_head = None
     current_text = []
-    # Ищем строки, начинающиеся с римской цифры и точки
     roman_pattern = re.compile(r'^([IVX]+)\.\s*(.*)$')
     for line in merged:
         match = roman_pattern.match(line)
@@ -101,13 +133,10 @@ def extract_chapters(raw_text):
                 current_text.append(line)
     if current_head is not None:
         chapters.append({'head': current_head, 'text': '\n'.join(current_text).strip()})
+    return [ch for ch in chapters if ch['text'] or ch['head']]
 
-    # Удаляем главы с пустым текстом (если они есть)
-    chapters = [ch for ch in chapters if ch['text'] or ch['head']]
-    return chapters
-
-def parse_post(post_element):
-    # Ищем контейнер с содержимым поста
+def get_post_text(post_element):
+    """Извлекает чистый текст из поста (без разбивки на главы)"""
     wrapper = post_element.find('div', class_='bbWrapper')
     if not wrapper:
         wrapper = post_element.find('article', class_='message-body')
@@ -120,65 +149,205 @@ def parse_post(post_element):
     if not wrapper:
         wrapper = post_element.find('div', class_='message-main')
     if not wrapper:
-        print("Не найден контейнер с содержимым поста")
-        return []
-
+        return ""
     for br in wrapper.find_all('br'):
         br.replace_with('\n')
-    raw_text = wrapper.get_text(separator='\n')
-    raw_text = re.sub(r'\n\s*\n', '\n', raw_text).strip()
-    return extract_chapters(raw_text)
+    text = wrapper.get_text(separator='\n')
+    text = re.sub(r'\n\s*\n', '\n', text).strip()
+    text = re.sub(r'[\u200b\u200c\u200d]', '', text)
+    return text
 
+def get_post_chapters(post_element):
+    """Возвращает список глав из поста (использует extract_chapters)"""
+    text = get_post_text(post_element)
+    return extract_chapters(text)
+
+def post_as_one_chapter(post_element, default_head=""):
+    """
+    Возвращает одну главу из поста (head = первая строка, text = остальное).
+    Используется для страниц, где нет римских цифр.
+    """
+    text = get_post_text(post_element)
+    if not text:
+        return None
+    lines = text.split('\n')
+    head = lines[0] if lines else default_head
+    body = '\n'.join(lines[1:]).strip()
+    return {'head': head, 'text': body}
+
+# ------------------- ПАРСЕРЫ ДЛЯ РАЗНЫХ ТИПОВ СТРАНИЦ -------------------
+def parse_pro(posts):
+    """Парсинг ПРО (посты #2-#9)"""
+    sections = []
+    for idx, post in enumerate(posts, start=2):
+        text = get_post_text(post)
+        if not text:
+            continue
+        lines = text.split('\n')
+        head = lines[0] if lines else f"Раздел {idx}"
+        sections.append({'head': head, 'text': '\n'.join(lines[1:]).strip()})
+    return [{
+        "name": "Правила редактирования объявлений (ПРО)",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "contents": sections
+    }]
+
+def parse_useful(posts):
+    """Парсинг Полезное (посты #10-#11 на странице ПРО)"""
+    sections = []
+    for idx, post in enumerate(posts, start=10):
+        text = get_post_text(post)
+        if not text:
+            continue
+        lines = text.split('\n')
+        head = lines[0] if lines else f"Полезное ч.{idx-9}"
+        sections.append({'head': head, 'text': '\n'.join(lines[1:]).strip()})
+    return [{
+        "name": "Полезное",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "contents": sections
+    }]
+
+def parse_common(posts):
+    """Парсинг общих правил (каждый пост – одна глава)"""
+    sections = []
+    for idx, post in enumerate(posts, start=1):
+        chapter = post_as_one_chapter(post, default_head=f"Раздел {idx}")
+        if chapter:
+            sections.append(chapter)
+    return [{
+        "name": "Общие правила СМИ",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "contents": sections
+    }]
+
+def parse_ppe(posts):
+    """Парсинг ППЭ (каждый пост – одна глава)"""
+    sections = []
+    for idx, post in enumerate(posts, start=1):
+        chapter = post_as_one_chapter(post, default_head=f"Раздел {idx}")
+        if chapter:
+            sections.append(chapter)
+    return [{
+        "name": "Правила проведения эфиров (ППЭ)",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "contents": sections
+    }]
+
+def parse_white_list(posts):
+    """Парсинг белого списка (только пост #2)"""
+    if not posts:
+        return []
+    post = posts[0]
+    text = get_post_text(post)
+    # Ищем раздел "РЕЕСТР БЕЛОГО СПИСКА"
+    match = re.search(r'РЕЕСТР БЕЛОГО СПИСКА\s*(.*)', text, re.IGNORECASE | re.DOTALL)
+    if match:
+        text = match.group(1).strip()
+    lines = text.split('\n')
+    items = [line.strip() for line in lines if line.strip()]
+    return [{
+        "name": "Белый список СМИ",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "contents": [{"head": "Реестр", "text": '\n'.join(items)}]
+    }]
+
+def parse_black_list(posts):
+    """Парсинг чёрного списка (пост #2 с таблицами)"""
+    if not posts:
+        return []
+    post = posts[0]
+    wrapper = post.find('div', class_='bbWrapper')
+    if not wrapper:
+        return []
+    tables = wrapper.find_all('table')
+    if tables:
+        data = []
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cells = row.find_all('td')
+                if cells:
+                    nick = cells[0].get_text(strip=True)
+                    reason = cells[1].get_text(strip=True) if len(cells) > 1 else ""
+                    date = cells[2].get_text(strip=True) if len(cells) > 2 else ""
+                    data.append({'nick': nick, 'reason': reason, 'date': date})
+        # Формируем текстовое представление
+        text_lines = []
+        for item in data:
+            text_lines.append(f"{item['nick']} — {item['reason']} ({item['date']})")
+        text = '\n'.join(text_lines)
+    else:
+        text = get_post_text(post)
+    return [{
+        "name": "Чёрный список СМИ",
+        "date": datetime.now().strftime("%Y-%m-%d"),
+        "contents": [{"head": "Список", "text": text}]
+    }]
+
+# ------------------- ОСНОВНАЯ ФУНКЦИЯ -------------------
 def main():
     if not USERNAME or not PASSWORD:
         raise Exception("Не заданы переменные окружения FORUM_USERNAME и FORUM_PASSWORD")
+
     session = requests.Session()
     session.headers.update(HEADERS)
     login(session)
 
     headers_get = HEADERS.copy()
     headers_get['Referer'] = 'https://forum.adv-rp.com/'
-    response = session.get(FORUM_URL, headers=headers_get)
-    if response.status_code != 200:
-        print(f"Ошибка загрузки: {response.status_code}")
-        print(response.text[:1000])
-        raise Exception(f"Не удалось загрузить страницу: {response.status_code}")
 
-    soup = BeautifulSoup(response.text, 'html.parser')
-    posts = soup.find_all('article', class_='message')
-    print(f"Найдено постов: {len(posts)}")
-
-    if len(posts) == 0:
-        posts = soup.find_all('div', class_=re.compile(r'.*message.*'))
-        print(f"Найдено div с message: {len(posts)}")
-
-    if len(posts) < 2:
-        print("Не найдено достаточно постов. Вывод первых 2000 символов HTML:")
-        print(response.text[:2000])
-        posts = soup.find_all('article')
-        print(f"Всего article: {len(posts)}")
-
-    sections = []
-    for idx, post in enumerate(posts[:2]):
-        chapters = parse_post(post)
-        if not chapters:
-            print(f"Пост {idx} не содержит глав")
-            # Для отладки выведем текст поста
-            post_text = post.get_text(separator='\n', strip=True)
-            print(f"Текст поста {idx} (первые 1000 символов):")
-            print(post_text[:1000])
+    for page in PAGES:
+        print(f"\nОбработка: {page['url']} (тип: {page['type']})")
+        response = session.get(page['url'], headers=headers_get)
+        if response.status_code != 200:
+            print(f"  Ошибка загрузки: {response.status_code}")
             continue
-        name = "Дисциплинарный устав СМИ" if idx == 0 else "Устав СМИ"
-        sections.append({
-            "name": name,
-            "date": datetime.now().strftime("%Y-%m-%d"),
-            "contents": chapters
-        })
-        print(f"Пост {idx}: найдено {len(chapters)} глав")
 
-    with open('rules.json', 'w', encoding='utf-8') as f:
-        json.dump(sections, f, ensure_ascii=False, indent=2)
-    print("JSON успешно создан!")
+        soup = BeautifulSoup(response.text, 'html.parser')
+        all_posts = soup.find_all('article', class_='message')
+        print(f"  Найдено постов: {len(all_posts)}")
+
+        # Выбираем нужные посты
+        if "posts" in page:
+            posts = []
+            for num in page["posts"]:
+                if num <= len(all_posts):
+                    posts.append(all_posts[num-1])
+                else:
+                    print(f"  Пост #{num} не найден (всего {len(all_posts)})")
+        else:
+            posts = all_posts
+
+        if not posts:
+            print("  Нет постов для парсинга")
+            continue
+
+        # Вызываем соответствующий парсер
+        parser = {
+            "pro": parse_pro,
+            "useful": parse_useful,
+            "common": parse_common,
+            "ppe": parse_ppe,
+            "white_list": parse_white_list,
+            "black_list": parse_black_list
+        }.get(page["type"])
+        if not parser:
+            print(f"  Неизвестный тип: {page['type']}")
+            continue
+
+        result = parser(posts)
+        if not result:
+            print("  Результат пустой")
+            continue
+
+        # Сохраняем в JSON
+        output_file = page.get("output", f"{page['type']}.json")
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        print(f"  Сохранён {output_file}")
+
+    print("\nВсе страницы обработаны!")
 
 if __name__ == "__main__":
     main()
