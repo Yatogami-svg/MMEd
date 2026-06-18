@@ -84,17 +84,31 @@ def extract_chapters(text):
     return chapters
 
 def parse_post(post_element):
+    # Ищем контейнер с содержимым поста
     wrapper = post_element.find('div', class_='bbWrapper')
     if not wrapper:
-        # Попробуем найти любой div с текстом внутри поста
+        wrapper = post_element.find('article', class_='message-body')
+    if not wrapper:
+        wrapper = post_element.find('div', class_='message-body')
+    if not wrapper:
         wrapper = post_element.find('div', class_='message-content')
-        if not wrapper:
-            return []
-    # Удаляем все теги, оставляя только текст с переносами
+    if not wrapper:
+        wrapper = post_element.find('div', class_=re.compile(r'message-content'))
+    if not wrapper:
+        # Если ничего не найдено, попробуем взять весь блок message-main
+        wrapper = post_element.find('div', class_='message-main')
+    if not wrapper:
+        print("Не найден контейнер с содержимым поста")
+        return []
+    
+    # Заменяем <br> на \n
     for br in wrapper.find_all('br'):
         br.replace_with('\n')
     raw_text = wrapper.get_text(separator='\n')
     raw_text = re.sub(r'\n\s*\n', '\n', raw_text).strip()
+    
+    print(f"Извлечённый текст (первые 500 символов):")
+    print(raw_text[:500] if raw_text else "Текст пуст")
     return extract_chapters(raw_text)
 
 def main():
@@ -102,17 +116,13 @@ def main():
         raise Exception("Не заданы переменные окружения FORUM_USERNAME и FORUM_PASSWORD")
     session = requests.Session()
     session.headers.update(HEADERS)
-
-    # Авторизация
     login(session)
 
-    # Загружаем страницу
     headers_get = HEADERS.copy()
     headers_get['Referer'] = 'https://forum.adv-rp.com/'
     response = session.get(FORUM_URL, headers=headers_get)
     if response.status_code != 200:
         print(f"Ошибка загрузки: {response.status_code}")
-        print("Ответ сервера (первые 1000 символов):")
         print(response.text[:1000])
         raise Exception(f"Не удалось загрузить страницу: {response.status_code}")
 
@@ -122,19 +132,16 @@ def main():
     print("Сохранён page_debug.html для отладки")
 
     soup = BeautifulSoup(response.text, 'html.parser')
-    # Ищем все article с классом message (может быть и без класса)
     posts = soup.find_all('article', class_='message')
     print(f"Найдено постов: {len(posts)}")
+
     if len(posts) == 0:
-        # Попробуем найти любой div с классом, содержащим 'message'
         posts = soup.find_all('div', class_=re.compile(r'.*message.*'))
         print(f"Найдено div с message: {len(posts)}")
 
     if len(posts) < 2:
-        # Если постов всё ещё мало, выведем часть HTML для анализа
         print("Не найдено достаточно постов. Вывод первых 2000 символов HTML:")
         print(response.text[:2000])
-        # Попробуем найти все article
         posts = soup.find_all('article')
         print(f"Всего article: {len(posts)}")
 
@@ -143,9 +150,6 @@ def main():
         chapters = parse_post(post)
         if not chapters:
             print(f"Пост {idx} не содержит глав")
-            # Сохраним текст поста для отладки
-            text_debug = post.get_text(strip=True)
-            print(f"Текст поста: {text_debug[:200]}...")
             continue
         name = "Дисциплинарный устав СМИ" if idx == 0 else "Устав СМИ"
         sections.append({
