@@ -59,6 +59,10 @@ def login(session):
     return session
 
 def extract_chapters(text):
+    # Удаляем невидимые символы и исправляем заголовки глав
+    text = re.sub(r'[\u200b\u200c\u200d]', '', text)
+    # Объединяем разорванные заголовки: I\n. Общие положения. -> I. Общие положения.
+    text = re.sub(r'(I|II|III|IV|V|VI|VII|VIII|IX|X)\s*\n\s*\.\s*', r'\1. ', text)
     lines = text.split('\n')
     chapters = []
     current_head = None
@@ -84,7 +88,6 @@ def extract_chapters(text):
     return chapters
 
 def parse_post(post_element):
-    # Ищем контейнер с содержимым поста
     wrapper = post_element.find('div', class_='bbWrapper')
     if not wrapper:
         wrapper = post_element.find('article', class_='message-body')
@@ -95,19 +98,21 @@ def parse_post(post_element):
     if not wrapper:
         wrapper = post_element.find('div', class_=re.compile(r'message-content'))
     if not wrapper:
-        # Если ничего не найдено, попробуем взять весь блок message-main
         wrapper = post_element.find('div', class_='message-main')
     if not wrapper:
         print("Не найден контейнер с содержимым поста")
         return []
     
-    # Заменяем <br> на \n
     for br in wrapper.find_all('br'):
         br.replace_with('\n')
     raw_text = wrapper.get_text(separator='\n')
     raw_text = re.sub(r'\n\s*\n', '\n', raw_text).strip()
     
-    print(f"Извлечённый текст (первые 500 символов):")
+    # Предобработка
+    raw_text = re.sub(r'[\u200b\u200c\u200d]', '', raw_text)
+    raw_text = re.sub(r'(I|II|III|IV|V|VI|VII|VIII|IX|X)\s*\n\s*\.\s*', r'\1. ', raw_text)
+    
+    print(f"Извлечённый текст (первые 500 символов после предобработки):")
     print(raw_text[:500] if raw_text else "Текст пуст")
     return extract_chapters(raw_text)
 
@@ -125,11 +130,6 @@ def main():
         print(f"Ошибка загрузки: {response.status_code}")
         print(response.text[:1000])
         raise Exception(f"Не удалось загрузить страницу: {response.status_code}")
-
-    # Сохраняем HTML для отладки
-    with open('page_debug.html', 'w', encoding='utf-8') as f:
-        f.write(response.text)
-    print("Сохранён page_debug.html для отладки")
 
     soup = BeautifulSoup(response.text, 'html.parser')
     posts = soup.find_all('article', class_='message')
