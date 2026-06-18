@@ -10,12 +10,11 @@ LOGIN_URL = "https://forum.adv-rp.com/login"
 USERNAME = os.getenv("FORUM_USERNAME")
 PASSWORD = os.getenv("FORUM_PASSWORD")
 
-# Заголовки, которые обычно отправляет браузер, но без brotli
 HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
     'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate',  # убрали br
+    'Accept-Encoding': 'gzip, deflate',
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
@@ -87,7 +86,11 @@ def extract_chapters(text):
 def parse_post(post_element):
     wrapper = post_element.find('div', class_='bbWrapper')
     if not wrapper:
-        return []
+        # Попробуем найти любой div с текстом внутри поста
+        wrapper = post_element.find('div', class_='message-content')
+        if not wrapper:
+            return []
+    # Удаляем все теги, оставляя только текст с переносами
     for br in wrapper.find_all('br'):
         br.replace_with('\n')
     raw_text = wrapper.get_text(separator='\n')
@@ -103,11 +106,9 @@ def main():
     # Авторизация
     login(session)
 
-    # Теперь загружаем страницу с уставом, добавив Referer и дополнительный заголовок
+    # Загружаем страницу
     headers_get = HEADERS.copy()
-    headers_get['Referer'] = 'https://forum.adv-rp.com/'  # откуда пришли
-    # headers_get['X-Requested-With'] = 'XMLHttpRequest'  # опционально, может помочь
-
+    headers_get['Referer'] = 'https://forum.adv-rp.com/'
     response = session.get(FORUM_URL, headers=headers_get)
     if response.status_code != 200:
         print(f"Ошибка загрузки: {response.status_code}")
@@ -115,14 +116,36 @@ def main():
         print(response.text[:1000])
         raise Exception(f"Не удалось загрузить страницу: {response.status_code}")
 
+    # Сохраняем HTML для отладки
+    with open('page_debug.html', 'w', encoding='utf-8') as f:
+        f.write(response.text)
+    print("Сохранён page_debug.html для отладки")
+
     soup = BeautifulSoup(response.text, 'html.parser')
+    # Ищем все article с классом message (может быть и без класса)
     posts = soup.find_all('article', class_='message')
+    print(f"Найдено постов: {len(posts)}")
+    if len(posts) == 0:
+        # Попробуем найти любой div с классом, содержащим 'message'
+        posts = soup.find_all('div', class_=re.compile(r'.*message.*'))
+        print(f"Найдено div с message: {len(posts)}")
+
     if len(posts) < 2:
-        raise Exception("Найдено меньше 2 постов")
+        # Если постов всё ещё мало, выведем часть HTML для анализа
+        print("Не найдено достаточно постов. Вывод первых 2000 символов HTML:")
+        print(response.text[:2000])
+        # Попробуем найти все article
+        posts = soup.find_all('article')
+        print(f"Всего article: {len(posts)}")
+
     sections = []
     for idx, post in enumerate(posts[:2]):
         chapters = parse_post(post)
         if not chapters:
+            print(f"Пост {idx} не содержит глав")
+            # Сохраним текст поста для отладки
+            text_debug = post.get_text(strip=True)
+            print(f"Текст поста: {text_debug[:200]}...")
             continue
         name = "Дисциплинарный устав СМИ" if idx == 0 else "Устав СМИ"
         sections.append({
@@ -130,6 +153,8 @@ def main():
             "date": datetime.now().strftime("%Y-%m-%d"),
             "contents": chapters
         })
+        print(f"Пост {idx}: найдено {len(chapters)} глав")
+
     with open('rules.json', 'w', encoding='utf-8') as f:
         json.dump(sections, f, ensure_ascii=False, indent=2)
     print("JSON успешно создан!")
