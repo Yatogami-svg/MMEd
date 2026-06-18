@@ -28,6 +28,9 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run parser
+        env:
+          FORUM_USERNAME: ${{ secrets.FORUM_USERNAME }}
+          FORUM_PASSWORD: ${{ secrets.FORUM_PASSWORD }}
         run: python parser.py
 
       - name: Commit and push changes
