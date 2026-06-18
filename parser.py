@@ -4,25 +4,23 @@ import json
 import re
 from datetime import datetime
 import os
-import time
 
 FORUM_URL = "https://forum.adv-rp.com/threads/mm-distsiplinarnyi-ustav-i-ustav-sredstv-massovoi-informatsii.2619941/"
 LOGIN_URL = "https://forum.adv-rp.com/login"
 USERNAME = os.getenv("FORUM_USERNAME")
 PASSWORD = os.getenv("FORUM_PASSWORD")
 
-# Расширенный набор заголовков, имитирующий браузер Chrome
+# Заголовки, которые обычно отправляет браузер, но без brotli
 HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
     'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Accept-Encoding': 'gzip, deflate, br',
+    'Accept-Encoding': 'gzip, deflate',  # убрали br
     'Connection': 'keep-alive',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'same-origin',
-    'Sec-Fetch-User': '?1',
+    'Sec-Fetch-Site': 'none',
     'Cache-Control': 'max-age=0',
 }
 
@@ -51,7 +49,6 @@ def login(session):
         action_url = LOGIN_URL
     if not action_url.startswith('http'):
         action_url = 'https://forum.adv-rp.com' + action_url
-    # Добавляем заголовки для POST-запроса
     login_headers = HEADERS.copy()
     login_headers['Content-Type'] = 'application/x-www-form-urlencoded'
     response = session.post(action_url, data=data, headers=login_headers)
@@ -102,15 +99,22 @@ def main():
         raise Exception("Не заданы переменные окружения FORUM_USERNAME и FORUM_PASSWORD")
     session = requests.Session()
     session.headers.update(HEADERS)
+
+    # Авторизация
     login(session)
-    # После логина используем те же заголовки для GET-запроса
-    response = session.get(FORUM_URL, headers=HEADERS)
+
+    # Теперь загружаем страницу с уставом, добавив Referer и дополнительный заголовок
+    headers_get = HEADERS.copy()
+    headers_get['Referer'] = 'https://forum.adv-rp.com/'  # откуда пришли
+    # headers_get['X-Requested-With'] = 'XMLHttpRequest'  # опционально, может помочь
+
+    response = session.get(FORUM_URL, headers=headers_get)
     if response.status_code != 200:
-        # Если 403, возможно, нужен реферар или другие заголовки
         print(f"Ошибка загрузки: {response.status_code}")
-        print("Ответ сервера (первые 500 символов):")
-        print(response.text[:500])
+        print("Ответ сервера (первые 1000 символов):")
+        print(response.text[:1000])
         raise Exception(f"Не удалось загрузить страницу: {response.status_code}")
+
     soup = BeautifulSoup(response.text, 'html.parser')
     posts = soup.find_all('article', class_='message')
     if len(posts) < 2:
