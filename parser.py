@@ -10,13 +10,13 @@ PAGES = [
     {
         "url": "https://forum.adv-rp.com/threads/mm-pravila-redaktirovaniya-ob-yavlenii-pro.2618807/",
         "type": "pro",
-        "posts": [2, 3, 4, 5, 6, 7, 8, 9],  # посты #2-#9
+        "posts": [2, 3, 4, 5, 6, 7, 8, 9],
         "output": "pro.json"
     },
     {
         "url": "https://forum.adv-rp.com/threads/mm-pravila-redaktirovaniya-ob-yavlenii-pro.2618807/",
         "type": "useful",
-        "posts": [10, 11],                  # посты #10-#11 (Полезное)
+        "posts": [10, 11],
         "output": "useful.json"
     },
     {
@@ -32,16 +32,20 @@ PAGES = [
     {
         "url": "https://forum.adv-rp.com/threads/mm-o-belyi-spisok-sredstv-massovoi-informatsii.2694858/",
         "type": "white_list",
-        "posts": [2],  # только пост #2
+        "posts": [2],
         "output": "white_list.json"
     },
     {
         "url": "https://forum.adv-rp.com/threads/mm-chernyi-spisok-smi-spisok-lyudei-log-izmenenii-chs-smi.2420838/",
         "type": "black_list",
-        "posts": [2],  # пост #2 с таблицами
+        "posts": [2],
         "output": "black_list.json"
     },
-    # Уже есть дисциплинарный устав – мы его не парсим отдельно, он уже включён в rules.json
+    {
+        "url": "https://forum.adv-rp.com/threads/mm-distsiplinarnyi-ustav-i-ustav-sredstv-massovoi-informatsii.2619941/",
+        "type": "discipline",
+        "output": "discipline.json"
+    }
 ]
 
 # ------------------- НАСТРОЙКИ ФОРУМА -------------------
@@ -100,7 +104,6 @@ def login(session):
 
 # ------------------- ОБЩИЕ ФУНКЦИИ ПАРСИНГА -------------------
 def extract_chapters(raw_text):
-    """Разбивает текст на главы по римским цифрам (I., II., III. и т.д.)"""
     raw_text = re.sub(r'[\u200b\u200c\u200d\u2028\u2029]', '', raw_text)
     lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
     merged = []
@@ -136,7 +139,6 @@ def extract_chapters(raw_text):
     return [ch for ch in chapters if ch['text'] or ch['head']]
 
 def get_post_text(post_element):
-    """Извлекает чистый текст из поста (без разбивки на главы)"""
     wrapper = post_element.find('div', class_='bbWrapper')
     if not wrapper:
         wrapper = post_element.find('article', class_='message-body')
@@ -158,15 +160,10 @@ def get_post_text(post_element):
     return text
 
 def get_post_chapters(post_element):
-    """Возвращает список глав из поста (использует extract_chapters)"""
     text = get_post_text(post_element)
     return extract_chapters(text)
 
 def post_as_one_chapter(post_element, default_head=""):
-    """
-    Возвращает одну главу из поста (head = первая строка, text = остальное).
-    Используется для страниц, где нет римских цифр.
-    """
     text = get_post_text(post_element)
     if not text:
         return None
@@ -177,7 +174,6 @@ def post_as_one_chapter(post_element, default_head=""):
 
 # ------------------- ПАРСЕРЫ ДЛЯ РАЗНЫХ ТИПОВ СТРАНИЦ -------------------
 def parse_pro(posts):
-    """Парсинг ПРО (посты #2-#9)"""
     sections = []
     for idx, post in enumerate(posts, start=2):
         text = get_post_text(post)
@@ -193,7 +189,6 @@ def parse_pro(posts):
     }]
 
 def parse_useful(posts):
-    """Парсинг Полезное (посты #10-#11 на странице ПРО)"""
     sections = []
     for idx, post in enumerate(posts, start=10):
         text = get_post_text(post)
@@ -209,7 +204,6 @@ def parse_useful(posts):
     }]
 
 def parse_common(posts):
-    """Парсинг общих правил (каждый пост – одна глава)"""
     sections = []
     for idx, post in enumerate(posts, start=1):
         chapter = post_as_one_chapter(post, default_head=f"Раздел {idx}")
@@ -222,7 +216,6 @@ def parse_common(posts):
     }]
 
 def parse_ppe(posts):
-    """Парсинг ППЭ (каждый пост – одна глава)"""
     sections = []
     for idx, post in enumerate(posts, start=1):
         chapter = post_as_one_chapter(post, default_head=f"Раздел {idx}")
@@ -235,12 +228,10 @@ def parse_ppe(posts):
     }]
 
 def parse_white_list(posts):
-    """Парсинг белого списка (только пост #2)"""
     if not posts:
         return []
     post = posts[0]
     text = get_post_text(post)
-    # Ищем раздел "РЕЕСТР БЕЛОГО СПИСКА"
     match = re.search(r'РЕЕСТР БЕЛОГО СПИСКА\s*(.*)', text, re.IGNORECASE | re.DOTALL)
     if match:
         text = match.group(1).strip()
@@ -253,7 +244,6 @@ def parse_white_list(posts):
     }]
 
 def parse_black_list(posts):
-    """Парсинг чёрного списка (пост #2 с таблицами)"""
     if not posts:
         return []
     post = posts[0]
@@ -272,7 +262,6 @@ def parse_black_list(posts):
                     reason = cells[1].get_text(strip=True) if len(cells) > 1 else ""
                     date = cells[2].get_text(strip=True) if len(cells) > 2 else ""
                     data.append({'nick': nick, 'reason': reason, 'date': date})
-        # Формируем текстовое представление
         text_lines = []
         for item in data:
             text_lines.append(f"{item['nick']} — {item['reason']} ({item['date']})")
@@ -284,6 +273,23 @@ def parse_black_list(posts):
         "date": datetime.now().strftime("%Y-%m-%d"),
         "contents": [{"head": "Список", "text": text}]
     }]
+
+def parse_discipline(posts):
+    """Дисциплинарный устав и устав СМИ (2 поста)"""
+    sections = []
+    if len(posts) < 2:
+        return []
+    for idx, post in enumerate(posts[:2]):
+        chapters = get_post_chapters(post)
+        if not chapters:
+            continue
+        name = "Дисциплинарный устав СМИ" if idx == 0 else "Устав СМИ"
+        sections.append({
+            "name": name,
+            "date": datetime.now().strftime("%Y-%m-%d"),
+            "contents": chapters
+        })
+    return sections
 
 # ------------------- ОСНОВНАЯ ФУНКЦИЯ -------------------
 def main():
@@ -308,7 +314,6 @@ def main():
         all_posts = soup.find_all('article', class_='message')
         print(f"  Найдено постов: {len(all_posts)}")
 
-        # Выбираем нужные посты
         if "posts" in page:
             posts = []
             for num in page["posts"]:
@@ -323,14 +328,14 @@ def main():
             print("  Нет постов для парсинга")
             continue
 
-        # Вызываем соответствующий парсер
         parser = {
             "pro": parse_pro,
             "useful": parse_useful,
             "common": parse_common,
             "ppe": parse_ppe,
             "white_list": parse_white_list,
-            "black_list": parse_black_list
+            "black_list": parse_black_list,
+            "discipline": parse_discipline
         }.get(page["type"])
         if not parser:
             print(f"  Неизвестный тип: {page['type']}")
@@ -341,11 +346,39 @@ def main():
             print("  Результат пустой")
             continue
 
-        # Сохраняем в JSON
         output_file = page.get("output", f"{page['type']}.json")
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         print(f"  Сохранён {output_file}")
+
+    # ------------------- ОБЪЕДИНЕНИЕ ВСЕХ РАЗДЕЛОВ В ОДИН JSON -------------------
+    print("\nОбъединение всех разделов в rules.json...")
+    all_sections = []
+    files_to_merge = [
+        'pro.json',
+        'useful.json',
+        'common_rules.json',
+        'ppe.json',
+        'white_list.json',
+        'black_list.json',
+        'discipline.json'
+    ]
+    for fname in files_to_merge:
+        if os.path.exists(fname):
+            with open(fname, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    all_sections.extend(data)
+                elif isinstance(data, dict):
+                    all_sections.append(data)
+                else:
+                    print(f"  Неизвестный формат в {fname}, пропуск")
+    if all_sections:
+        with open('rules.json', 'w', encoding='utf-8') as f:
+            json.dump(all_sections, f, ensure_ascii=False, indent=2)
+        print(f"  Создан rules.json с {len(all_sections)} разделами")
+    else:
+        print("  Не удалось создать rules.json – нет данных")
 
     print("\nВсе страницы обработаны!")
 
